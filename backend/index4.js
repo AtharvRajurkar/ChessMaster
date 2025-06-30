@@ -57,6 +57,20 @@ function generateGameId() {
   return Math.random().toString(36).slice(2, 11).padEnd(9, '0');
 }
 
+const getUserFromSocket = async (socket) => {
+  try {
+    // Assuming the frontend sends user info when connecting
+    const userInfo = socket.handshake.auth?.user || socket.handshake.query?.user;
+    if (userInfo) {
+      return typeof userInfo === 'string' ? JSON.parse(userInfo) : userInfo;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting user from socket:', error);
+    return null;
+  }
+};
+
 // Game state management
 class GameState {
   constructor(gameId, whitePlayer, blackPlayer) {
@@ -64,6 +78,10 @@ class GameState {
     this.players = {
       white: whitePlayer.id,
       black: blackPlayer.id
+    };
+    this.playerNames = {
+      white: whitePlayer.name || `Player ${whitePlayer.id.slice(-4)}`,
+      black: blackPlayer.name || `Player ${blackPlayer.id.slice(-4)}`
     };
     this.sockets = {
       white: whitePlayer.socket,
@@ -90,6 +108,7 @@ class GameState {
     return {
       id: this.id,
       players: JSON.stringify(this.players),
+       playerNames: JSON.stringify(this.playerNames), 
       fen: this.fen,
       turn: this.turn,
       status: this.status,
@@ -110,6 +129,7 @@ class GameState {
     
     game.id = obj.id;
     game.players = JSON.parse(obj.players);
+     game.playerNames = JSON.parse(obj.playerNames || '{}'); // Add this line
     game.sockets = sockets;
     game.fen = obj.fen;
     game.turn = obj.turn;
@@ -163,6 +183,53 @@ class GameState {
 }
 
 // Timer management
+// function startGameTimer(gameId) {
+//   const timer = setInterval(async () => {
+//     const game = games.get(gameId);
+//     if (!game || game.status !== 'active') {
+//       clearInterval(timer);
+//       playerTimers.delete(gameId);
+//       return;
+//     }
+
+//     const timeoutResult = game.updateTimer();
+    
+//     if (timeoutResult) {
+//       // Game ended by timeout
+//       clearInterval(timer);
+//       playerTimers.delete(gameId);
+      
+//       io.to(gameId).emit('gameEnd', { result: timeoutResult });
+//       // Also notify spectators
+//       io.to(`spectate:${gameId}`).emit('gameEnd', { result: timeoutResult });
+      
+//       games.delete(gameId);
+//       await redisClient.del(`game:${gameId}`);
+//       return;
+//     }
+
+//     // Send timer updates to players and spectators
+//       const playerTimerData = {
+//       playerTime: game.turn === 'w' ? game.timers.white : game.timers.black,
+//       opponentTime: game.turn === 'w' ? game.timers.black : game.timers.white
+//     };
+    
+//     // Send timer updates to spectators (absolute white/black values)
+//     const spectatorTimerData = {
+//       whiteTime: game.timers.white,
+//       blackTime: game.timers.black
+//     };
+
+//      io.to(gameId).emit('timerUpdate', playerTimerData);
+//     io.to(`spectate:${gameId}`).emit('spectatorTimerUpdate', spectatorTimerData);
+
+//     // Save updated game state
+//     await game.saveToRedis();
+//   }, 1000);
+
+//   playerTimers.set(gameId, timer);
+// }
+
 function startGameTimer(gameId) {
   const timer = setInterval(async () => {
     const game = games.get(gameId);
@@ -188,14 +255,39 @@ function startGameTimer(gameId) {
       return;
     }
 
-    // Send timer updates to players and spectators
-    const timerData = {
-      playerTime: game.turn === 'w' ? game.timers.white : game.timers.black,
-      opponentTime: game.turn === 'w' ? game.timers.black : game.timers.white
-    };
+    // Send timer updates to players - these need to be relative to each player
+    const whiteSocket = game.sockets.white;
+    const blackSocket = game.sockets.black;
     
-    io.to(gameId).emit('timerUpdate', timerData);
-    io.to(`spectate:${gameId}`).emit('timerUpdate', timerData);
+    if (whiteSocket) {
+      whiteSocket.emit('timerUpdate', {
+        playerTime: game.timers.white,
+        opponentTime: game.timers.black
+      });
+    }
+    
+    if (blackSocket) {
+      blackSocket.emit('timerUpdate', {
+        playerTime: game.timers.black,
+        opponentTime: game.timers.white
+      });
+    }
+    
+    // Send timer updates to spectators (absolute white/black values)
+    
+    
+    const spectatorTimerData = {
+      whiteTime: game.timers.white,
+      blackTime: game.timers.black,
+      currentTurn: game.turn,
+    };
+    io.to(`spectate:${gameId}`).emit('spectatorTimerUpdate', spectatorTimerData);
+
+
+
+    
+
+    
 
     // Save updated game state
     await game.saveToRedis();
@@ -207,12 +299,21 @@ function startGameTimer(gameId) {
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  socket.on('joinMatchmaking', () => {
+  socket.on('joinMatchmaking', async () => {
+    const userInfo = await getUserFromSocket(socket);
     if (waitingPlayer && waitingPlayer.id !== socket.id) {
       // Match found!
       const gameId = generateGameId();
-      const whitePlayer = waitingPlayer;
-      const blackPlayer = { id: socket.id, socket: socket };
+      const whitePlayer = {
+      ...waitingPlayer,
+      name: waitingPlayer.name
+    };
+      const blackPlayer = {
+      id: socket.id,
+      socket: socket,
+      name: userInfo,
+    //   name: userInfo?.name || userInfo?.username || `Player ${socket.id.slice(-4)}`
+    };
 
       // Create new game
       const game = new GameState(gameId, whitePlayer, blackPlayer);
@@ -229,13 +330,17 @@ io.on('connection', (socket) => {
       whitePlayer.socket.emit('gameFound', {
         gameId: gameId,
         playerColor: 'w',
-        opponent: blackPlayer.id
+        opponent: blackPlayer.id,
+         opponentName: blackPlayer.name,
+      playerName: whitePlayer.name
       });
 
       blackPlayer.socket.emit('gameFound', {
         gameId: gameId,
         playerColor: 'b',
-        opponent: whitePlayer.id
+        opponent: whitePlayer.id,
+         opponentName: whitePlayer.name,
+      playerName: blackPlayer.name
       });
 
       // Start timer
@@ -249,6 +354,7 @@ io.on('connection', (socket) => {
       waitingPlayer = {
         id: socket.id,
         socket: socket,
+        name: userInfo?.name || userInfo?.username || `Player ${socket.id.slice(-4)}`,
         joinTime: Date.now()
       };
       socket.emit('waitingForPlayer');
@@ -605,9 +711,11 @@ app.get("/games/active", async (req, res) => {
     for (const key of keys) {
       const gameData = await redisClient.hGetAll(key);
       if (gameData.status === 'active') {
+         const playerNames = JSON.parse(gameData.playerNames || '{}');
         activeGames.push({
           id: gameData.id,
           players: JSON.parse(gameData.players),
+           playerNames: playerNames,
           turn: gameData.turn,
           moveCount: JSON.parse(gameData.moveHistory).length,
           startTime: parseInt(gameData.startTime)

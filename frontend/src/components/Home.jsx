@@ -1,7 +1,7 @@
 import React from 'react'
 //import ChessGame from './Chessgame'
 //import ChessGame from './HomePage'
-import ChessGame from './HomePage1';
+import ChessGame from './HomePage2';
 const Home = () => {
   return (
     <div>

@@ -163,6 +163,53 @@ class GameState {
 }
 
 // Timer management
+// function startGameTimer(gameId) {
+//   const timer = setInterval(async () => {
+//     const game = games.get(gameId);
+//     if (!game || game.status !== 'active') {
+//       clearInterval(timer);
+//       playerTimers.delete(gameId);
+//       return;
+//     }
+
+//     const timeoutResult = game.updateTimer();
+    
+//     if (timeoutResult) {
+//       // Game ended by timeout
+//       clearInterval(timer);
+//       playerTimers.delete(gameId);
+      
+//       io.to(gameId).emit('gameEnd', { result: timeoutResult });
+//       // Also notify spectators
+//       io.to(`spectate:${gameId}`).emit('gameEnd', { result: timeoutResult });
+      
+//       games.delete(gameId);
+//       await redisClient.del(`game:${gameId}`);
+//       return;
+//     }
+
+//     // Send timer updates to players and spectators
+//       const playerTimerData = {
+//       playerTime: game.turn === 'w' ? game.timers.white : game.timers.black,
+//       opponentTime: game.turn === 'w' ? game.timers.black : game.timers.white
+//     };
+    
+//     // Send timer updates to spectators (absolute white/black values)
+//     const spectatorTimerData = {
+//       whiteTime: game.timers.white,
+//       blackTime: game.timers.black
+//     };
+
+//      io.to(gameId).emit('timerUpdate', playerTimerData);
+//     io.to(`spectate:${gameId}`).emit('spectatorTimerUpdate', spectatorTimerData);
+
+//     // Save updated game state
+//     await game.saveToRedis();
+//   }, 1000);
+
+//   playerTimers.set(gameId, timer);
+// }
+
 function startGameTimer(gameId) {
   const timer = setInterval(async () => {
     const game = games.get(gameId);
@@ -188,14 +235,39 @@ function startGameTimer(gameId) {
       return;
     }
 
-    // Send timer updates to players and spectators
-    const timerData = {
-      playerTime: game.turn === 'w' ? game.timers.white : game.timers.black,
-      opponentTime: game.turn === 'w' ? game.timers.black : game.timers.white
-    };
+    // Send timer updates to players - these need to be relative to each player
+    const whiteSocket = game.sockets.white;
+    const blackSocket = game.sockets.black;
     
-    io.to(gameId).emit('timerUpdate', timerData);
-    io.to(`spectate:${gameId}`).emit('timerUpdate', timerData);
+    if (whiteSocket) {
+      whiteSocket.emit('timerUpdate', {
+        playerTime: game.timers.white,
+        opponentTime: game.timers.black
+      });
+    }
+    
+    if (blackSocket) {
+      blackSocket.emit('timerUpdate', {
+        playerTime: game.timers.black,
+        opponentTime: game.timers.white
+      });
+    }
+    
+    // Send timer updates to spectators (absolute white/black values)
+    
+    
+    const spectatorTimerData = {
+      whiteTime: game.timers.white,
+      blackTime: game.timers.black,
+      currentTurn: game.turn,
+    };
+    io.to(`spectate:${gameId}`).emit('spectatorTimerUpdate', spectatorTimerData);
+
+
+
+    
+
+    
 
     // Save updated game state
     await game.saveToRedis();
