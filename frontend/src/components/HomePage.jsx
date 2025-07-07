@@ -51,14 +51,13 @@ const socket = io('http://localhost:5000', {
   }
 });
 
-// Reconnect with updated user info if needed
+
 socket.on('connect', () => {
   const userInfo = getUserInfo();
   if (userInfo) {
     socket.emit('updateUserInfo', userInfo);
   }
 });
-// const socket = io('http://localhost:5000');
 
 function ChessGame({ showGoBack }) {
   const [game, setGame] = useState(new Chess());
@@ -219,7 +218,6 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
     };
   }, [playerColor, isSpectating, spectatingGameId, gameStarted]);
 
-  // Fetch active games
   const fetchActiveGames = async () => {
     try {
       const response = await fetch('http://localhost:5000/games/active');
