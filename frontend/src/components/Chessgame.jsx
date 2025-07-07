@@ -348,13 +348,87 @@
 // export default ChessGame;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import React, { useState, useEffect } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
 import io from 'socket.io-client';
 import { Crown, Users, Clock, Flag, Play, User, Timer } from 'lucide-react';
 
-const socket = io('http://localhost:5000');
+const getUserInfo = () => {
+  try {
+    // First try to get userInfo from localStorage (primary source)
+    const userInfo = localStorage.getItem('userInfo');
+    if (userInfo) {
+      return JSON.parse(userInfo);
+    }
+    
+    // Fallback to playerName (for backward compatibility)
+    const playerName = localStorage.getItem('playerName');
+    if (playerName) {
+      try {
+        const parsed = JSON.parse(playerName);
+        return parsed;
+      } catch {
+        // If parsing fails, it's a plain string
+        return { playerName: playerName };
+      }
+    }
+    
+    // Fallback to other stored user info
+    const authUser = localStorage.getItem('authUser');
+    return authUser ? JSON.parse(authUser) : null;
+  } catch (error) {
+    console.error('Error getting user info:', error);
+    return null;
+  }
+};
+
+// Create socket connection with dynamic user info
+const socket = io('http://localhost:5000', {
+  auth: {
+    user: getUserInfo()
+  }
+});
+
+// Reconnect with updated user info if needed
+socket.on('connect', () => {
+  const userInfo = getUserInfo();
+  if (userInfo) {
+    socket.emit('updateUserInfo', userInfo);
+  }
+});
 
 function ChessGame() {
   const [game, setGame] = useState(new Chess());
@@ -372,6 +446,12 @@ function ChessGame() {
     socket.on('waitingForPlayer', () => {
       setStatus('Waiting for opponent to join...');
       setSearchingForGame(true);
+      setGameStarted(false);
+    });
+
+    socket.on('matchmakingError', ({ message }) => {
+      setStatus(`Matchmaking error: ${message}`);
+      setSearchingForGame(false);
       setGameStarted(false);
     });
 
@@ -419,6 +499,7 @@ function ChessGame() {
 
     return () => {
       socket.off('waitingForPlayer');
+      socket.off('matchmakingError');
       socket.off('gameFound');
       socket.off('gameMove');
       socket.off('invalidMove');
@@ -454,6 +535,19 @@ function ChessGame() {
   };
 
   const findGame = () => {
+    // Ensure we have the latest user info before joining matchmaking
+    const userInfo = getUserInfo();
+    if (!userInfo) {
+      setStatus('Please log in to play');
+      return;
+    }
+    
+    // Update socket auth and reconnect if needed
+    if (socket.auth?.user !== userInfo) {
+      socket.auth = { user: userInfo };
+      socket.emit('updateUserInfo', userInfo);
+    }
+    
     setSearchingForGame(true);
     setStatus('Searching for opponent...');
     socket.emit('joinMatchmaking');

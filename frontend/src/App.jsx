@@ -16,7 +16,7 @@
 
 import React from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Home from "./components/Home";
+//import Home from "./components/Home";
 import ChessAuth from "./components/Login2";
 import DashboardLayout from './components/DashboardLayout';
 import Profile from './components/Profile';

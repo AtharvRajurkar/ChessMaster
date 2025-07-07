@@ -17,31 +17,45 @@ import { useNavigate } from 'react-router-dom';
 
 const getUserInfo = () => {
   try {
-    // First try to get playerName directly (if it's a plain string)
+    // First try to get userInfo from localStorage (primary source)
+    const userInfo = localStorage.getItem('userInfo');
+    if (userInfo) {
+      return JSON.parse(userInfo);
+    }
+    
+    // Fallback to playerName (for backward compatibility)
     const playerName = localStorage.getItem('playerName');
     if (playerName) {
-      // If it's a plain string, return it as an object
       try {
         const parsed = JSON.parse(playerName);
         return parsed;
       } catch {
         // If parsing fails, it's a plain string
-        return { name: playerName, username: playerName };
+        return { playerName: playerName };
       }
     }
     
     // Fallback to other stored user info
-    const userInfo = localStorage.getItem('userInfo') || localStorage.getItem('authUser');
-    return userInfo ? JSON.parse(userInfo) : null;
+    const authUser = localStorage.getItem('authUser');
+    return authUser ? JSON.parse(authUser) : null;
   } catch (error) {
     console.error('Error getting user info:', error);
     return null;
   }
 };
 
+// Create socket connection with dynamic user info
 const socket = io('http://localhost:5000', {
   auth: {
     user: getUserInfo()
+  }
+});
+
+// Reconnect with updated user info if needed
+socket.on('connect', () => {
+  const userInfo = getUserInfo();
+  if (userInfo) {
+    socket.emit('updateUserInfo', userInfo);
   }
 });
 // const socket = io('http://localhost:5000');
@@ -74,6 +88,12 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
     socket.on('waitingForPlayer', () => {
       setStatus('Waiting for opponent to join...');
       setSearchingForGame(true);
+      setGameStarted(false);
+    });
+
+    socket.on('matchmakingError', ({ message }) => {
+      setStatus(`Matchmaking error: ${message}`);
+      setSearchingForGame(false);
       setGameStarted(false);
     });
 
@@ -186,6 +206,7 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
 
     return () => {
       socket.off('waitingForPlayer');
+      socket.off('matchmakingError');
       socket.off('gameFound');
       socket.off('gameMove');
       socket.off('invalidMove');
@@ -245,6 +266,19 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
   };
 
   const findGame = () => {
+    // Ensure we have the latest user info before joining matchmaking
+    const userInfo = getUserInfo();
+    if (!userInfo) {
+      setStatus('Please log in to play');
+      return;
+    }
+    
+    // Update socket auth and reconnect if needed
+    if (socket.auth?.user !== userInfo) {
+      socket.auth = { user: userInfo };
+      socket.emit('updateUserInfo', userInfo);
+    }
+    
     setSearchingForGame(true);
     setStatus('Searching for opponent...');
     socket.emit('joinMatchmaking');

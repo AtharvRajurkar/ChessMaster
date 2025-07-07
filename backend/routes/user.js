@@ -4,12 +4,11 @@ const User = require('../models/user');
 const auth = require('../middlewares/auth');
 const router = express.Router();
 
-// Register
+
 router.post('/register', async (req, res) => {
   try {
     const { playerName, email, password } = req.body;
 
-    // Validation
     if (!playerName || !email || !password) {
       return res.status(400).json({ error: 'All fields are required' });
     }
@@ -18,7 +17,6 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    // Check if user exists
     const existingUser = await User.findOne({ 
       $or: [{ email }, { playerName }] 
     });
@@ -29,11 +27,10 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Create user
     const user = new User({
       playerName,
       email,
-      hashedPassword: password // Will be hashed by pre-save middleware
+      hashedPassword: password
     });
 
     await user.save();
