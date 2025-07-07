@@ -161,4 +161,16 @@ router.put('/profile', auth, async (req, res) => {
   }
 });
 
+// Leaderboard endpoint
+router.get('/leaderboard', async (req, res) => {
+  try {
+    const users = await User.find({}, '-password')
+      .sort({ playerRating: -1 })
+      .limit(100); // Limit to top 100 for performance
+    res.json({ success: true, users });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
+  }
+});
+
 module.exports = router;

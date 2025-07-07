@@ -3,10 +3,50 @@ import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
 import io from 'socket.io-client';
 import { Crown, Users, Clock, Flag, Play, User, Timer, Eye, ArrowLeft, Gamepad2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
-const socket = io('http://localhost:5000');
+// const getUserInfo = () => {
+//   try {
+//     const userInfo = localStorage.getItem('user') || localStorage.getItem('userInfo') || localStorage.getItem('authUser');
+//     return userInfo ? JSON.parse(userInfo) : null;
+//   } catch (error) {
+//     console.error('Error getting user info:', error);
+//     return null;
+//   }
+// };
 
-function ChessGame() {
+const getUserInfo = () => {
+  try {
+    // First try to get playerName directly (if it's a plain string)
+    const playerName = localStorage.getItem('playerName');
+    if (playerName) {
+      // If it's a plain string, return it as an object
+      try {
+        const parsed = JSON.parse(playerName);
+        return parsed;
+      } catch {
+        // If parsing fails, it's a plain string
+        return { name: playerName, username: playerName };
+      }
+    }
+    
+    // Fallback to other stored user info
+    const userInfo = localStorage.getItem('userInfo') || localStorage.getItem('authUser');
+    return userInfo ? JSON.parse(userInfo) : null;
+  } catch (error) {
+    console.error('Error getting user info:', error);
+    return null;
+  }
+};
+
+const socket = io('http://localhost:5000', {
+  auth: {
+    user: getUserInfo()
+  }
+});
+// const socket = io('http://localhost:5000');
+
+function ChessGame({ showGoBack }) {
   const [game, setGame] = useState(new Chess());
   const [gameId, setGameId] = useState(null);
   const [playerColor, setPlayerColor] = useState('w');
@@ -17,12 +57,18 @@ function ChessGame() {
   const [whiteTimer, setWhiteTimer] = useState(600);
   const [blackTimer, setBlackTimer] = useState(600);
   const [isPlayerTurn, setIsPlayerTurn] = useState(false);
+  const [playerName, setPlayerName] = useState('');
+const [opponentName, setOpponentName] = useState('');
+const [whitePlayerName, setWhitePlayerName] = useState('');
+const [blackPlayerName, setBlackPlayerName] = useState('');
   
   // Spectating states
   const [isSpectating, setIsSpectating] = useState(false);
   const [activeGames, setActiveGames] = useState([]);
   const [showActiveGames, setShowActiveGames] = useState(false);
   const [spectatingGameId, setSpectatingGameId] = useState(null);
+
+  const navigate = useNavigate();
 
   useEffect(() => {
     socket.on('waitingForPlayer', () => {
@@ -31,10 +77,20 @@ function ChessGame() {
       setGameStarted(false);
     });
 
-    socket.on('gameFound', ({ gameId, playerColor, opponent }) => {
+    socket.on('gameFound', ({ gameId, playerColor, opponent, opponentName, playerName }) => {
       setGameId(gameId);
       setPlayerColor(playerColor);
       setOpponentId(opponent);
+       setPlayerName(playerName || 'You');
+  setOpponentName(opponentName || 'Opponent');
+  if (playerColor === 'w') {
+    setWhitePlayerName(playerName || 'You');
+    setBlackPlayerName(opponentName || 'Opponent');
+  } else {
+    setWhitePlayerName(opponentName || 'Opponent');
+    setBlackPlayerName(playerName || 'You');
+  }
+
       setStatus(`Game started! You are playing as ${playerColor === 'w' ? 'White' : 'Black'}`);
       setGameStarted(true);
       setSearchingForGame(false);
@@ -71,47 +127,28 @@ function ChessGame() {
       }
     });
 
-     socket.on('timerUpdate', ({ playerTime, opponentTime }) => {
-    // This is only for players, not spectators
-    if (!isSpectating && gameStarted) {
-      // For players: playerTime is the current player's time, opponentTime is opponent's time
-      // We need to map these to white/black timers based on whose turn it is
-      
-      //const currentTurn = game.turn();
-      
-    //   if (currentTurn === 'w') {
-    //     // White's turn - playerTime is white's time, opponentTime is black's time
-    //     setWhiteTimer(playerTime);
-    //     setBlackTimer(opponentTime);
-    //   } else {
-    //     // Black's turn - playerTime is black's time, opponentTime is white's time
-    //     setBlackTimer(playerTime);
-    //     setWhiteTimer(opponentTime);
-    //   }
-
-      if (playerColor === 'w') {
-        // Current user is white player
-        setWhiteTimer(playerTime);
-        setBlackTimer(opponentTime);
-      } else {
-        // Current user is black player
-        setBlackTimer(playerTime);
-        setWhiteTimer(opponentTime);
+    socket.on('timerUpdate', ({ playerTime, opponentTime }) => {
+      // This is only for players, not spectators
+      if (!isSpectating && gameStarted) {
+        if (playerColor === 'w') {
+          // Current user is white player
+          setWhiteTimer(playerTime);
+          setBlackTimer(opponentTime);
+        } else {
+          // Current user is black player
+          setBlackTimer(playerTime);
+          setWhiteTimer(opponentTime);
+        }
       }
-    }
-  });
+    });
 
-  socket.on('spectatorTimerUpdate', ({ whiteTime, blackTime, currentTurn }) => {
-    if (isSpectating) {
-
-        console.log(`whitetime${whiteTimer}`);
-        console.log(`blacktime${blackTimer}`);
-   //this console.log is not giving anything
-      setWhiteTimer(whiteTime);
-      setBlackTimer(blackTime);
-       
-    }
-  });
+    socket.on('spectatorTimerUpdate', ({ whiteTime, blackTime, currentTurn }) => {
+      if (isSpectating) {
+        // For spectators, always use absolute values - don't flip based on turn
+        setWhiteTimer(whiteTime);
+        setBlackTimer(blackTime);
+      }
+    });
 
     socket.on('drawOffered', () => {
       setStatus('Opponent offered a draw. Accept or decline?');
@@ -123,12 +160,14 @@ function ChessGame() {
         const spectateGame = new Chess(gameState.fen);
         setGame(spectateGame);
         const timers = JSON.parse(gameState.timers);
+        // For initial game state, use absolute values
+         const playerNames = JSON.parse(gameState.playerNames || '{}');
+    
+    // Set spectator names
+    setWhitePlayerName(playerNames.white || 'White Player');
+    setBlackPlayerName(playerNames.black || 'Black Player');
         setWhiteTimer(timers.white);
         setBlackTimer(timers.black);
-        if(gameState.turn === 'b'){
-           setWhiteTimer(timers.black);
-        setBlackTimer(timers.white); 
-        }
         setStatus(`Spectating game - ${gameState.turn === 'w' ? 'White' : 'Black'} to move`);
       }
     });
@@ -138,12 +177,9 @@ function ChessGame() {
         const spectateGame = new Chess(gameState.fen);
         setGame(spectateGame);
         const timers = JSON.parse(gameState.timers);
+        // For game updates, use absolute values
         setWhiteTimer(timers.white);
         setBlackTimer(timers.black);
-        if(gameState.turn === 'b'){
-           setWhiteTimer(timers.black);
-        setBlackTimer(timers.white); 
-        }
         setStatus(`Spectating game - ${gameState.turn === 'w' ? 'White' : 'Black'} to move`);
       }
     });
@@ -155,7 +191,7 @@ function ChessGame() {
       socket.off('invalidMove');
       socket.off('gameEnd');
       socket.off('timerUpdate');
-       socket.off('spectatorTimerUpdate'); 
+      socket.off('spectatorTimerUpdate'); 
       socket.off('drawOffered');
       socket.off('gameState');
       socket.off('gameUpdate');
@@ -287,6 +323,10 @@ function ChessGame() {
     setOpponentId(null);
     setIsSpectating(false);
     setSpectatingGameId(null);
+     setPlayerName('');
+  setOpponentName('');
+  setWhitePlayerName('');
+  setBlackPlayerName('');
   };
 
   // Show active games list
@@ -328,10 +368,10 @@ function ChessGame() {
                         </div>
                         <div className="grid grid-cols-2 gap-4 text-sm text-slate-300">
                           <div>
-                            <span className="text-slate-400">White:</span> Player {game.players.white.slice(-4)}
+                            <span className="text-slate-400">White:</span> {game.playerNames?.white || `Player ${game.players.white.slice(-4)}`}
                           </div>
                           <div>
-                            <span className="text-slate-400">Black:</span> Player {game.players.black.slice(-4)}
+                            <span className="text-slate-400">Black:</span> {game.playerNames?.black || `Player ${game.players.black.slice(-4)}`}
                           </div>
                           <div>
                             <span className="text-slate-400">Turn:</span> {game.turn === 'w' ? 'White' : 'Black'}
@@ -447,177 +487,187 @@ function ChessGame() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="text-center mb-6">
-          <div className="flex items-center justify-center mb-2">
-            <h1 className="text-3xl font-bold text-white bg-gradient-to-r from-white to-slate-300 bg-clip-text">
-              Chess Master
-            </h1>
-            {isSpectating && (
-              <div className="ml-4 bg-purple-600/20 border border-purple-500 rounded-full px-4 py-1 flex items-center">
-                <Eye className="w-4 h-4 text-purple-400 mr-2" />
-                <span className="text-purple-300 text-sm font-medium">Spectating</span>
-              </div>
-            )}
-          </div>
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-4 border border-slate-700 inline-block shadow-lg">
-            <p className="text-slate-300 flex items-center justify-center">
-              <Crown className="w-5 h-5 mr-2 text-yellow-400" />
-              {status}
-            </p>
-          </div>
-        </div>
-
-       <div className="flex flex-col xl:flex-row gap-6 items-start justify-center">
-          {/* Black Player Timer */}
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-6 border border-slate-700 shadow-xl min-w-[280px] order-1 xl:order-1">
-            <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
-              <User className="w-5 h-5 mr-2 text-white bg-black rounded-full p-0.5" />
-              Black Player
-              {!isSpectating && playerColor === 'b' && (
-                <span className="ml-2 text-sm text-blue-400">(You)</span>
-              )}
-            </h3>
-            <div className="bg-slate-700/50 rounded-xl p-4 mb-4">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-300">Time:</span>
-                <div className={`flex items-center font-mono text-2xl font-bold ${
-                  game.turn() === 'b' ? 'text-red-400' : 'text-slate-300'
-                }`}>
-                  <Timer className="w-5 h-5 mr-2" />
-                  {formatTime(blackTimer)}
-                </div>
-              </div>
-              {game.turn() === 'b' && (
-                <div className="mt-2 h-1 bg-slate-600 rounded-full overflow-hidden">
-                  <div className="h-full bg-red-400 animate-pulse"></div>
+    <div className="relative">
+      {showGoBack && (
+        <button
+          onClick={() => navigate('/dashboard/profile')}
+          className="absolute top-4 left-4 bg-slate-700 hover:bg-purple-700 text-white px-4 py-2 rounded-lg shadow-lg z-50"
+        >
+          &larr; Go Back
+        </button>
+      )}
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-6">
+            <div className="flex items-center justify-center mb-2">
+              <h1 className="text-3xl font-bold text-white bg-gradient-to-r from-white to-slate-300 bg-clip-text">
+                Chess Master
+              </h1>
+              {isSpectating && (
+                <div className="ml-4 bg-purple-600/20 border border-purple-500 rounded-full px-4 py-1 flex items-center">
+                  <Eye className="w-4 h-4 text-purple-400 mr-2" />
+                  <span className="text-purple-300 text-sm font-medium">Spectating</span>
                 </div>
               )}
             </div>
-          </div>
-
-          {/* Chess Board */}
-          <div className="bg-slate-800/30 backdrop-blur-sm rounded-2xl p-6 border border-slate-700 shadow-2xl order-3 xl:order-2">
-            <div className="w-full max-w-2xl mx-auto">
-                <div>This is the chess board</div>
-              <Chessboard
-                position={game.fen()}
-                onPieceDrop={(sourceSquare, targetSquare) =>
-                  makeMove({ from: sourceSquare, to: targetSquare })
-                }
-                boardOrientation={isSpectating ? 'white' : (playerColor === 'w' ? 'white' : 'black')}
-                customBoardStyle={{
-                  borderRadius: '12px',
-                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8)'
-                }}
-                customDarkSquareStyle={{ backgroundColor: '#374151' }}
-                customLightSquareStyle={{ backgroundColor: '#f3f4f6' }}
-                arePiecesDraggable={!isSpectating}
-              />
+            <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-4 border border-slate-700 inline-block shadow-lg">
+              <p className="text-slate-300 flex items-center justify-center">
+                <Crown className="w-5 h-5 mr-2 text-yellow-400" />
+                {status}
+              </p>
             </div>
           </div>
 
-          {/* White Player Timer and Controls */}
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-6 border border-slate-700 shadow-xl min-w-[280px] order-2 xl:order-3">
-            <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
-              <User className="w-5 h-5 mr-2 text-black bg-white rounded-full p-0.5" />
-              White Player
-              {!isSpectating && playerColor === 'w' && (
-                <span className="ml-2 text-sm text-blue-400">(You)</span>
-              )}
-            </h3>
-            <div className="bg-slate-700/50 rounded-xl p-4 mb-6">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-300">Time:</span>
-                <div className={`flex items-center font-mono text-2xl font-bold ${
-                  game.turn() === 'w' ? 'text-green-400' : 'text-slate-300'
-                }`}>
-                  <Timer className="w-5 h-5 mr-2" />
-                  {formatTime(whiteTimer)}
-                </div>
-              </div>
-              {game.turn() === 'w' && (
-                <div className="mt-2 h-1 bg-slate-600 rounded-full overflow-hidden">
-                  <div className="h-full bg-green-400 animate-pulse"></div>
-                </div>
-              )}
-            </div>
-
-            <h4 className="text-lg font-semibold text-white mb-3 flex items-center">
-              <Clock className="w-5 h-5 mr-2 text-blue-400" />
-              {isSpectating ? 'Spectator Controls' : 'Game Controls'}
-            </h4>
-            <div className="space-y-3">
-              {isSpectating ? (
-                <button
-                  onClick={stopSpectating}
-                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center"
-                >
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Stop Spectating
-                </button>
-              ) : (
-                <>
-                  <button
-                    onClick={offerDraw}
-                    disabled={!gameStarted}
-                    className="w-full bg-yellow-600 hover:bg-yellow-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg"
-                  >
-                    Offer Draw
-                  </button>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={acceptDraw}
-                      disabled={!gameStarted}
-                      className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg text-sm"
-                    >
-                      Accept Draw
-                    </button>
-                    <button
-                      onClick={declineDraw}
-                      disabled={!gameStarted}
-                      className="flex-1 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg text-sm"
-                    >
-                      Decline Draw
-                    </button>
+         <div className="flex flex-col xl:flex-row gap-6 items-start justify-center">
+            {/* Black Player Timer */}
+            <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-6 border border-slate-700 shadow-xl min-w-[280px] order-1 xl:order-1">
+              <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
+                <User className="w-5 h-5 mr-2 text-white bg-black rounded-full p-0.5" />
+                {blackPlayerName}
+                {!isSpectating && playerColor === 'b' && (
+                  <span className="ml-2 text-sm text-blue-400">(You)</span>
+                )}
+              </h3>
+              <div className="bg-slate-700/50 rounded-xl p-4 mb-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300">Time:</span>
+                  <div className={`flex items-center font-mono text-2xl font-bold ${
+                    game.turn() === 'b' ? 'text-red-400' : 'text-slate-300'
+                  }`}>
+                    <Timer className="w-5 h-5 mr-2" />
+                    {formatTime(blackTimer)}
                   </div>
-                  <button
-                    onClick={resign}
-                    disabled={!gameStarted}
-                    className="w-full bg-red-600 hover:bg-red-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center"
-                  >
-                    <Flag className="w-4 h-4 mr-2" />
-                    Resign
-                  </button>
-                </>
-              )}
-              <button
-                onClick={newGame}
-                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg"
-              >
-                {isSpectating ? 'Find New Game' : 'New Game'}
-              </button>
+                </div>
+                {game.turn() === 'b' && (
+                  <div className="mt-2 h-1 bg-slate-600 rounded-full overflow-hidden">
+                    <div className="h-full bg-red-400 animate-pulse"></div>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="mt-6 pt-6 border-t border-slate-600">
-              <h4 className="text-lg font-semibold text-white mb-3">Game Info</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between text-slate-300">
-                  <span>Turn:</span>
-                  <span className={`font-semibold ${game.turn() === 'w' ? 'text-green-400' : 'text-red-400'}`}>
-                    {game.turn() === 'w' ? 'White' : 'Black'}
-                  </span>
+            {/* Chess Board */}
+            <div className="bg-slate-800/30 backdrop-blur-sm rounded-2xl p-6 border border-slate-700 shadow-2xl order-3 xl:order-2">
+              <div className="w-full max-w-2xl mx-auto">
+                  <div>This is the chess board</div>
+                <Chessboard
+                  position={game.fen()}
+                  onPieceDrop={(sourceSquare, targetSquare) =>
+                    makeMove({ from: sourceSquare, to: targetSquare })
+                  }
+                  boardOrientation={isSpectating ? 'white' : (playerColor === 'w' ? 'white' : 'black')}
+                  customBoardStyle={{
+                    borderRadius: '12px',
+                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8)'
+                  }}
+                  customDarkSquareStyle={{ backgroundColor: '#374151' }}
+                  customLightSquareStyle={{ backgroundColor: '#f3f4f6' }}
+                  arePiecesDraggable={!isSpectating}
+                />
+              </div>
+            </div>
+
+            {/* White Player Timer and Controls */}
+            <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-6 border border-slate-700 shadow-xl min-w-[280px] order-2 xl:order-3">
+              <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
+                <User className="w-5 h-5 mr-2 text-black bg-white rounded-full p-0.5" />
+                {whitePlayerName}
+                {!isSpectating && playerColor === 'w' && (
+                  <span className="ml-2 text-sm text-blue-400">(You)</span>
+                )}
+              </h3>
+              <div className="bg-slate-700/50 rounded-xl p-4 mb-6">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300">Time:</span>
+                  <div className={`flex items-center font-mono text-2xl font-bold ${
+                    game.turn() === 'w' ? 'text-green-400' : 'text-slate-300'
+                  }`}>
+                    <Timer className="w-5 h-5 mr-2" />
+                    {formatTime(whiteTimer)}
+                  </div>
                 </div>
-                <div className="flex justify-between text-slate-300">
-                  <span>{isSpectating ? 'Spectating ID:' : 'Game ID:'}</span>
-                  <span className="font-mono text-xs text-slate-400">
-                    {(isSpectating ? spectatingGameId : gameId)?.slice(-6) || 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between text-slate-300">
-                  <span>Moves:</span>
-                  <span className="font-semibold text-white">{Math.floor(game.history().length / 2) + 1}</span>
+                {game.turn() === 'w' && (
+                  <div className="mt-2 h-1 bg-slate-600 rounded-full overflow-hidden">
+                    <div className="h-full bg-green-400 animate-pulse"></div>
+                  </div>
+                )}
+              </div>
+
+              <h4 className="text-lg font-semibold text-white mb-3 flex items-center">
+                <Clock className="w-5 h-5 mr-2 text-blue-400" />
+                {isSpectating ? 'Spectator Controls' : 'Game Controls'}
+              </h4>
+              <div className="space-y-3">
+                {isSpectating ? (
+                  <button
+                    onClick={stopSpectating}
+                    className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Stop Spectating
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={offerDraw}
+                      disabled={!gameStarted}
+                      className="w-full bg-yellow-600 hover:bg-yellow-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg"
+                    >
+                      Offer Draw
+                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={acceptDraw}
+                        disabled={!gameStarted}
+                        className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg text-sm"
+                      >
+                        Accept Draw
+                      </button>
+                      <button
+                        onClick={declineDraw}
+                        disabled={!gameStarted}
+                        className="flex-1 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg text-sm"
+                      >
+                        Decline Draw
+                      </button>
+                    </div>
+                    <button
+                      onClick={resign}
+                      disabled={!gameStarted}
+                      className="w-full bg-red-600 hover:bg-red-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center"
+                    >
+                      <Flag className="w-4 h-4 mr-2" />
+                      Resign
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={newGame}
+                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg"
+                >
+                  {isSpectating ? 'Find New Game' : 'New Game'}
+                </button>
+              </div>
+
+              <div className="mt-6 pt-6 border-t border-slate-600">
+                <h4 className="text-lg font-semibold text-white mb-3">Game Info</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between text-slate-300">
+                    <span>Turn:</span>
+                    <span className={`font-semibold ${game.turn() === 'w' ? 'text-green-400' : 'text-red-400'}`}>
+                      {game.turn() === 'w' ? 'White' : 'Black'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span>{isSpectating ? 'Spectating ID:' : 'Game ID:'}</span>
+                    <span className="font-mono text-xs text-slate-400">
+                      {(isSpectating ? spectatingGameId : gameId)?.slice(-6) || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span>Moves:</span>
+                    <span className="font-semibold text-white">{Math.floor(game.history().length / 2) + 1}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -629,3 +679,4 @@ function ChessGame() {
 }
 
 export default ChessGame;
+

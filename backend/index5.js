@@ -53,17 +53,75 @@ let waitingPlayer = null; // Only store one waiting player
 let games = new Map();
 let playerTimers = new Map();
 
+// Helper: Fetch user by socket id from game state
+async function getUserBySocketId(socketId, game) {
+  // Try to get userId from game.playerUserIds
+  const userId = game.playerUserIds && (game.players.white === socketId ? game.playerUserIds.white : game.playerUserIds.black);
+  if (!userId) return null;
+  return await User.findOne({ playerId: userId });
+}
+
+// Helper: Update both players' stats in DB
+async function updatePlayerStats(game, resultType, winnerColor = null) {
+  // resultType: 'timeout', 'checkmate', 'resignation', 'draw', 'disconnect'
+  // winnerColor: 'white' | 'black' | null (for draw)
+  try {
+    const whiteUser = await User.findOne({ playerId: game.playerUserIds.white });
+    const blackUser = await User.findOne({ playerId: game.playerUserIds.black });
+    if (!whiteUser || !blackUser) return;
+    let whiteResult, blackResult;
+    if (resultType === 'draw') {
+      whiteResult = 'draw';
+      blackResult = 'draw';
+    } else if (winnerColor === 'white') {
+      whiteResult = 'win';
+      blackResult = 'loss';
+    } else if (winnerColor === 'black') {
+      whiteResult = 'loss';
+      blackResult = 'win';
+    } else {
+      // fallback: treat as draw
+      whiteResult = 'draw';
+      blackResult = 'draw';
+    }
+    // Update stats
+    whiteUser.updateGameStats(whiteResult, blackUser.playerRating);
+    blackUser.updateGameStats(blackResult, whiteUser.playerRating);
+    await whiteUser.save();
+    await blackUser.save();
+    if (game.sockets.white) game.sockets.white.emit('playerStats', whiteUser ? whiteUser.toJSON() : {});
+    if (game.sockets.black) game.sockets.black.emit('playerStats', blackUser ? blackUser.toJSON() : {});
+  } catch (err) {
+    console.error('Error updating player stats:', err);
+  }
+}
+
 function generateGameId() {
   return Math.random().toString(36).slice(2, 11).padEnd(9, '0');
 }
 
 const getUserFromSocket = async (socket) => {
   try {
-    // Assuming the frontend sends user info when connecting
-    const userInfo = socket.handshake.auth?.user || socket.handshake.query?.user;
-    if (userInfo) {
-      return typeof userInfo === 'string' ? JSON.parse(userInfo) : userInfo;
+    let userInfo = socket.handshake.auth?.user || socket.handshake.query?.user;
+    if (typeof userInfo === 'string') {
+      try {
+        userInfo = JSON.parse(userInfo);
+      } catch (e) {
+        // fallback: treat as plain name
+        userInfo = { playerName: userInfo };
+      }
     }
+    
+    // Validate userInfo has required fields
+    if (userInfo && typeof userInfo === 'object') {
+      if (!userInfo.playerName) {
+        console.warn('userInfo missing playerName:', userInfo);
+        return null; // Don't allow connection without proper user info
+      }
+      return userInfo;
+    }
+    
+    console.warn('Invalid userInfo received:', userInfo);
     return null;
   } catch (error) {
     console.error('Error getting user from socket:', error);
@@ -78,6 +136,10 @@ class GameState {
     this.players = {
       white: whitePlayer.id,
       black: blackPlayer.id
+    };
+    this.playerUserIds = {
+      white: whitePlayer.userId,
+      black: blackPlayer.userId
     };
     this.playerNames = {
       white: whitePlayer.name || `Player ${whitePlayer.id.slice(-4)}`,
@@ -108,7 +170,8 @@ class GameState {
     return {
       id: this.id,
       players: JSON.stringify(this.players),
-       playerNames: JSON.stringify(this.playerNames), 
+      playerUserIds: JSON.stringify(this.playerUserIds),
+      playerNames: JSON.stringify(this.playerNames), 
       fen: this.fen,
       turn: this.turn,
       status: this.status,
@@ -129,7 +192,8 @@ class GameState {
     
     game.id = obj.id;
     game.players = JSON.parse(obj.players);
-     game.playerNames = JSON.parse(obj.playerNames || '{}'); // Add this line
+    game.playerUserIds = JSON.parse(obj.playerUserIds || '{}');
+    game.playerNames = JSON.parse(obj.playerNames || '{}');
     game.sockets = sockets;
     game.fen = obj.fen;
     game.turn = obj.turn;
@@ -182,6 +246,53 @@ class GameState {
   }
 }
 
+// Timer management
+// function startGameTimer(gameId) {
+//   const timer = setInterval(async () => {
+//     const game = games.get(gameId);
+//     if (!game || game.status !== 'active') {
+//       clearInterval(timer);
+//       playerTimers.delete(gameId);
+//       return;
+//     }
+
+//     const timeoutResult = game.updateTimer();
+    
+//     if (timeoutResult) {
+//       // Game ended by timeout
+//       clearInterval(timer);
+//       playerTimers.delete(gameId);
+      
+//       io.to(gameId).emit('gameEnd', { result: timeoutResult });
+//       // Also notify spectators
+//       io.to(`spectate:${gameId}`).emit('gameEnd', { result: timeoutResult });
+      
+//       games.delete(gameId);
+//       await redisClient.del(`game:${gameId}`);
+//       return;
+//     }
+
+//     // Send timer updates to players and spectators
+//       const playerTimerData = {
+//       playerTime: game.turn === 'w' ? game.timers.white : game.timers.black,
+//       opponentTime: game.turn === 'w' ? game.timers.black : game.timers.white
+//     };
+    
+//     // Send timer updates to spectators (absolute white/black values)
+//     const spectatorTimerData = {
+//       whiteTime: game.timers.white,
+//       blackTime: game.timers.black
+//     };
+
+//      io.to(gameId).emit('timerUpdate', playerTimerData);
+//     io.to(`spectate:${gameId}`).emit('spectatorTimerUpdate', spectatorTimerData);
+
+//     // Save updated game state
+//     await game.saveToRedis();
+//   }, 1000);
+
+//   playerTimers.set(gameId, timer);
+// }
 
 function startGameTimer(gameId) {
   const timer = setInterval(async () => {
@@ -203,6 +314,9 @@ function startGameTimer(gameId) {
       // Also notify spectators
       io.to(`spectate:${gameId}`).emit('gameEnd', { result: timeoutResult });
       
+      // Update stats
+      const winnerColor = game.timers.white <= 0 ? 'black' : 'white';
+      await updatePlayerStats(game, 'timeout', winnerColor);
       games.delete(gameId);
       await redisClient.del(`game:${gameId}`);
       return;
@@ -254,19 +368,28 @@ io.on('connection', (socket) => {
 
   socket.on('joinMatchmaking', async () => {
     const userInfo = await getUserFromSocket(socket);
+    
+    // Reject matchmaking if no valid userInfo
+    if (!userInfo || !userInfo.playerName) {
+      console.warn('Rejecting matchmaking - no valid userInfo:', userInfo);
+      socket.emit('matchmakingError', { message: 'Please log in to play' });
+      return;
+    }
+    
     if (waitingPlayer && waitingPlayer.id !== socket.id) {
       // Match found!
       const gameId = generateGameId();
       const whitePlayer = {
-      ...waitingPlayer,
-      name: waitingPlayer.name
-    };
+        ...waitingPlayer,
+        name: waitingPlayer.name,
+        userId: waitingPlayer.userId
+      };
       const blackPlayer = {
-      id: socket.id,
-      socket: socket,
-      name: userInfo,
-    //   name: userInfo?.name || userInfo?.username || `Player ${socket.id.slice(-4)}`
-    };
+        id: socket.id,
+        socket: socket,
+        name: userInfo.playerName, // Always use the actual playerName
+        userId: userInfo?.playerId
+      };
 
       // Create new game
       const game = new GameState(gameId, whitePlayer, blackPlayer);
@@ -307,7 +430,8 @@ io.on('connection', (socket) => {
       waitingPlayer = {
         id: socket.id,
         socket: socket,
-        name: userInfo?.name || userInfo?.username || `Player ${socket.id.slice(-4)}`,
+        name: userInfo.playerName, // Always use the actual playerName
+        userId: userInfo?.playerId,
         joinTime: Date.now()
       };
       socket.emit('waitingForPlayer');
@@ -388,8 +512,10 @@ io.on('connection', (socket) => {
             // Check for game end conditions
             if (chess.isGameOver()) {
               let result = '';
+              let winnerColor = null;
               if (chess.isCheckmate()) {
                 result = `${game.turn === 'w' ? 'Black' : 'White'} wins by checkmate`;
+                winnerColor = game.turn === 'w' ? 'black' : 'white';
               } else if (chess.isDraw()) {
                 if (chess.isStalemate()) {
                   result = 'Draw by stalemate';
@@ -400,6 +526,7 @@ io.on('connection', (socket) => {
                 } else {
                   result = 'Draw by 50-move rule';
                 }
+                winnerColor = null;
               }
               
               game.status = 'ended';
@@ -408,6 +535,9 @@ io.on('connection', (socket) => {
               io.to(gameId).emit('gameEnd', { result });
               io.to(`spectate:${gameId}`).emit('gameEnd', { result });
               
+              // Update stats
+              await updatePlayerStats(game, winnerColor ? 'checkmate' : 'draw', winnerColor);
+              
               // Cleanup
               const timer = playerTimers.get(gameId);
               if (timer) {
@@ -415,7 +545,6 @@ io.on('connection', (socket) => {
                 playerTimers.delete(gameId);
               }
               games.delete(gameId);
-              
             } else {
               // Game continues
               await game.saveToRedis();
@@ -457,14 +586,14 @@ io.on('connection', (socket) => {
     try {
       const { gameId } = data;
       const game = games.get(gameId);
-
       if (game && game.status === 'active') {
         const isWhitePlayer = game.players.white === socket.id;
         const playerColor = isWhitePlayer ? 'white' : 'black';
-        
+        const opponentColor = isWhitePlayer ? 'black' : 'white';
+        // Prevent duplicate offers
+        if (game.drawOffers[playerColor] || game.drawOffers[opponentColor]) return;
         game.drawOffers[playerColor] = true;
         await game.saveToRedis();
-
         // Notify opponent
         const opponentSocket = isWhitePlayer ? game.sockets.black : game.sockets.white;
         if (opponentSocket) {
@@ -480,14 +609,18 @@ io.on('connection', (socket) => {
     try {
       const { gameId } = data;
       const game = games.get(gameId);
-
       if (game && game.status === 'active') {
+        const isWhitePlayer = game.players.white === socket.id;
+        const playerColor = isWhitePlayer ? 'white' : 'black';
+        const opponentColor = isWhitePlayer ? 'black' : 'white';
+        // Only allow accepting if opponent has offered
+        if (!game.drawOffers[opponentColor]) return;
         game.status = 'ended';
         await game.saveToRedis();
-
         io.to(gameId).emit('gameEnd', { result: 'Draw by agreement' });
         io.to(`spectate:${gameId}`).emit('gameEnd', { result: 'Draw by agreement' });
-        
+        // Update stats
+        await updatePlayerStats(game, 'draw', null);
         // Cleanup
         const timer = playerTimers.get(gameId);
         if (timer) {
@@ -505,13 +638,11 @@ io.on('connection', (socket) => {
     try {
       const { gameId } = data;
       const game = games.get(gameId);
-
       if (game && game.status === 'active') {
         // Reset draw offers
         game.drawOffers.white = false;
         game.drawOffers.black = false;
         await game.saveToRedis();
-
         // Notify both players
         io.to(gameId).emit('drawDeclined');
       }
@@ -527,15 +658,20 @@ io.on('connection', (socket) => {
 
       if (game) {
         const isWhitePlayer = game.players.white === socket.id;
-        const winnerColor = isWhitePlayer ? 'Black' : 'White';
+        const winnerColor = isWhitePlayer ? 'black' : 'white';
         
         game.status = 'ended';
         await game.saveToRedis();
 
-        const endResult = result === 'resignation' ? `${winnerColor} wins by resignation` : result;
+        const endResult = result === 'resignation' ? `${winnerColor.charAt(0).toUpperCase() + winnerColor.slice(1)} wins by resignation` : result;
 
         io.to(gameId).emit('gameEnd', { result: endResult });
         io.to(`spectate:${gameId}`).emit('gameEnd', { result: endResult });
+        
+        // Update stats
+        if (result === 'resignation') {
+          await updatePlayerStats(game, 'resignation', winnerColor);
+        }
         
         // Cleanup
         const timer = playerTimers.get(gameId);
@@ -575,6 +711,10 @@ io.on('connection', (socket) => {
         
         // Notify spectators
         io.to(`spectate:${gameId}`).emit('gameEnd', { result: 'Opponent disconnected' });
+        
+        // Update stats
+        const winnerColor = game.players.white === socket.id ? 'black' : 'white';
+        await updatePlayerStats(game, 'disconnect', winnerColor);
         
         // Cleanup
         const timer = playerTimers.get(gameId);
@@ -728,20 +868,6 @@ async function cleanupExpiredGames() {
     console.error('Error cleaning up expired games:', error);
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Run cleanup every 10 minutes
 setInterval(cleanupExpiredGames, 600000);
