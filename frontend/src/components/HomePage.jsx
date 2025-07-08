@@ -5,15 +5,6 @@ import io from 'socket.io-client';
 import { Crown, Users, Clock, Flag, Play, User, Timer, Eye, ArrowLeft, Gamepad2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-// const getUserInfo = () => {
-//   try {
-//     const userInfo = localStorage.getItem('user') || localStorage.getItem('userInfo') || localStorage.getItem('authUser');
-//     return userInfo ? JSON.parse(userInfo) : null;
-//   } catch (error) {
-//     console.error('Error getting user info:', error);
-//     return null;
-//   }
-// };
 
 const getUserInfo = () => {
   try {
@@ -71,9 +62,13 @@ function ChessGame({ showGoBack }) {
   const [blackTimer, setBlackTimer] = useState(600);
   const [isPlayerTurn, setIsPlayerTurn] = useState(false);
   const [playerName, setPlayerName] = useState('');
-const [opponentName, setOpponentName] = useState('');
-const [whitePlayerName, setWhitePlayerName] = useState('');
-const [blackPlayerName, setBlackPlayerName] = useState('');
+  const [opponentName, setOpponentName] = useState('');
+  const [whitePlayerName, setWhitePlayerName] = useState('');
+  const [blackPlayerName, setBlackPlayerName] = useState('');
+  
+  // Draw state tracking
+  const [drawOffered, setDrawOffered] = useState(false);
+  const [drawOfferedBy, setDrawOfferedBy] = useState(null); // 'opponent' or 'player'
   
   // Spectating states
   const [isSpectating, setIsSpectating] = useState(false);
@@ -100,15 +95,15 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
       setGameId(gameId);
       setPlayerColor(playerColor);
       setOpponentId(opponent);
-       setPlayerName(playerName || 'You');
-  setOpponentName(opponentName || 'Opponent');
-  if (playerColor === 'w') {
-    setWhitePlayerName(playerName || 'You');
-    setBlackPlayerName(opponentName || 'Opponent');
-  } else {
-    setWhitePlayerName(opponentName || 'Opponent');
-    setBlackPlayerName(playerName || 'You');
-  }
+      setPlayerName(playerName || 'You');
+      setOpponentName(opponentName || 'Opponent');
+      if (playerColor === 'w') {
+        setWhitePlayerName(playerName || 'You');
+        setBlackPlayerName(opponentName || 'Opponent');
+      } else {
+        setWhitePlayerName(opponentName || 'Opponent');
+        setBlackPlayerName(playerName || 'You');
+      }
 
       setStatus(`Game started! You are playing as ${playerColor === 'w' ? 'White' : 'Black'}`);
       setGameStarted(true);
@@ -118,6 +113,10 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
       setBlackTimer(600);
       setGame(new Chess());
       setIsSpectating(false);
+      
+      // Reset draw state for new game
+      setDrawOffered(false);
+      setDrawOfferedBy(null);
     });
 
     socket.on('gameMove', ({ newFen, turn }) => {
@@ -140,6 +139,11 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
       setGameStarted(false);
       setSearchingForGame(false);
       setIsPlayerTurn(false);
+      
+      // Reset draw state when game ends
+      setDrawOffered(false);
+      setDrawOfferedBy(null);
+      
       if (isSpectating) {
         setIsSpectating(false);
         setSpectatingGameId(null);
@@ -170,7 +174,15 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
     });
 
     socket.on('drawOffered', () => {
+      setDrawOffered(true);
+      setDrawOfferedBy('opponent');
       setStatus('Opponent offered a draw. Accept or decline?');
+    });
+
+    socket.on('drawDeclined', () => {
+      setDrawOffered(false);
+      setDrawOfferedBy(null);
+      setStatus(`Your turn - You are ${playerColor === 'w' ? 'White' : 'Black'}`);
     });
 
     // Spectating events
@@ -213,6 +225,7 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
       socket.off('timerUpdate');
       socket.off('spectatorTimerUpdate'); 
       socket.off('drawOffered');
+      socket.off('drawDeclined');
       socket.off('gameState');
       socket.off('gameUpdate');
     };
@@ -329,6 +342,8 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
 
   const offerDraw = () => {
     socket.emit('offerDraw', { gameId });
+    setDrawOffered(true);
+    setDrawOfferedBy('player');
     setStatus('Draw offer sent to opponent.');
   };
 
@@ -338,6 +353,8 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
 
   const declineDraw = () => {
     socket.emit('declineDraw', { gameId });
+    setDrawOffered(false);
+    setDrawOfferedBy(null);
     setStatus(`Your turn - You are ${playerColor === 'w' ? 'White' : 'Black'}`);
   };
 
@@ -640,29 +657,39 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
                   </button>
                 ) : (
                   <>
-                    <button
-                      onClick={offerDraw}
-                      disabled={!gameStarted}
-                      className="w-full bg-yellow-600 hover:bg-yellow-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg"
-                    >
-                      Offer Draw
-                    </button>
-                    <div className="flex gap-2">
+                    {/* Draw buttons - only show appropriate ones based on state */}
+                    {drawOffered && drawOfferedBy === 'opponent' ? (
+                      // Show accept/decline buttons when opponent offers draw
+                      <div className="flex gap-2">
+                        <button
+                          onClick={acceptDraw}
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg text-sm"
+                        >
+                          Accept Draw
+                        </button>
+                        <button
+                          onClick={declineDraw}
+                          className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg text-sm"
+                        >
+                          Decline Draw
+                        </button>
+                      </div>
+                    ) : drawOffered && drawOfferedBy === 'player' ? (
+                      // Show waiting message when player offered draw
+                      <div className="w-full bg-yellow-600/20 border border-yellow-500/50 rounded-xl p-3 text-center">
+                        <p className="text-yellow-300 text-sm font-medium">Draw offer sent to opponent...</p>
+                      </div>
+                    ) : (
+                      // Show offer draw button when no draw is active
                       <button
-                        onClick={acceptDraw}
+                        onClick={offerDraw}
                         disabled={!gameStarted}
-                        className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg text-sm"
+                        className="w-full bg-yellow-600 hover:bg-yellow-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg"
                       >
-                        Accept Draw
+                        Offer Draw
                       </button>
-                      <button
-                        onClick={declineDraw}
-                        disabled={!gameStarted}
-                        className="flex-1 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-3 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg text-sm"
-                      >
-                        Decline Draw
-                      </button>
-                    </div>
+                    )}
+                    
                     <button
                       onClick={resign}
                       disabled={!gameStarted}
@@ -673,12 +700,15 @@ const [blackPlayerName, setBlackPlayerName] = useState('');
                     </button>
                   </>
                 )}
-                <button
-                  onClick={newGame}
-                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg"
-                >
-                  {isSpectating ? 'Find New Game' : 'New Game'}
-                </button>
+                {/* Only show New Game button when no active game */}
+                {(!gameStarted && !searchingForGame) && (
+                  <button
+                    onClick={newGame}
+                    className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg"
+                  >
+                    {isSpectating ? 'Find New Game' : 'New Game'}
+                  </button>
+                )}
               </div>
 
               <div className="mt-6 pt-6 border-t border-slate-600">
