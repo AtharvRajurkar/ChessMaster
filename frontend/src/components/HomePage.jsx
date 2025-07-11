@@ -35,8 +35,11 @@ const getUserInfo = () => {
   }
 };
 
+// Replace all hardcoded backend URLs with environment variable
+const API_URL = import.meta.env.VITE_API_URL;
+
 // Create socket connection with dynamic user info
-const socket = io('http://localhost:5000', {
+const socket = io(API_URL, {
   auth: {
     user: getUserInfo()
   }
@@ -233,7 +236,7 @@ function ChessGame({ showGoBack }) {
 
   const fetchActiveGames = async () => {
     try {
-      const response = await fetch('http://localhost:5000/games/active');
+      const response = await fetch(`${API_URL}/games/active`);
       const data = await response.json();
       if (data.success) {
         setActiveGames(data.games);
@@ -311,7 +314,7 @@ function ChessGame({ showGoBack }) {
       socket.emit('joinSpectator', { gameId });
       
       // Fetch initial game state
-      const response = await fetch(`http://localhost:5000/game/${gameId}`);
+      const response = await fetch(`${API_URL}/game/${gameId}`);
       const data = await response.json();
       
       if (data.success) {

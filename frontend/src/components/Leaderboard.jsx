@@ -12,10 +12,12 @@ const Leaderboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const API_URL = import.meta.env.VITE_API_URL;
+
   useEffect(() => {
     const fetchLeaderboard = async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/auth/leaderboard');
+        const res = await fetch(`${API_URL}/api/auth/leaderboard`);
         const data = await res.json();
         if (data.success) {
           setUsers(data.users);
