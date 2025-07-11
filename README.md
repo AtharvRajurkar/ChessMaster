@@ -1,4 +1,4 @@
-DeEPLOYED WEBSITE LINK : https://chess-master-beta.vercel.app/
+DEEPLOYED WEBSITE LINK : https://chess-master-beta.vercel.app/
 A full-stack real-time multiplayer chess platform built with React, Node.js, and MongoDB, featuring:
 
 🔄 Live PvP chess gameplay
