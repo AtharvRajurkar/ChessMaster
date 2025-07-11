@@ -605,6 +605,7 @@ function ChessGame({ showGoBack }) {
                     makeMove({ from: sourceSquare, to: targetSquare })
                   }
                   boardOrientation={isSpectating ? 'white' : (playerColor === 'w' ? 'white' : 'black')}
+                  boardWidth={500}
                   customBoardStyle={{
                     borderRadius: '12px',
                     boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8)'

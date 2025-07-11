@@ -27,11 +27,12 @@ dotenv.config();
 app.use('/api/auth', authRoutes);
 
 // MongoDB connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/chess-game', {
+const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/chess-game';
+mongoose.connect(mongoURI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
-.then(() => console.log('Connected to MongoDB'))
+.then(() => console.log(`Connected to MongoDB at ${mongoURI.includes('mongodb+srv') ? 'Atlas' : 'localhost'}`))
 .catch(err => console.error('MongoDB connection error:', err));
 
 const port = process.env.PORT || 5000;
