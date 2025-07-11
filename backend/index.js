@@ -14,12 +14,21 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: [
+      "http://localhost:5173",
+      "https://chess-master-beta.vercel.app"
+    ],
     methods: ["GET", "POST"]
   }
 });
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://chess-master-beta.vercel.app"
+  ],
+  credentials: true
+}));
 app.use(express.json());
 dotenv.config();
 
